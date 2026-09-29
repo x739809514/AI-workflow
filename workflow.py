@@ -57,9 +57,23 @@ def detect_subject(image: Image.Image, manual: list[int] | None) -> dict:
             raise ValueError("--bbox 必须位于母版图范围内")
         too_broad = (w * h > width * height * 0.85 or
                      (w > width * 0.95 and h > height * 0.95))
-        return {"bbox": manual, "method": "manual", "confidence": 0.3 if too_broad else 1.0,
-                "needs_review": too_broad,
-                "warning": "角色框覆盖了几乎整个画面；请只框住角色及会移动的道具" if too_broad else ""}
+        sparse_top = False
+        if too_broad:
+            rgba = np.asarray(image.convert("RGBA"))
+            alpha = rgba[:, :, 3]
+            if np.any(alpha < 250) and np.any(alpha > 10):
+                foreground = alpha > 10
+            else:
+                rgb = rgba[:, :, :3].astype(np.float32)
+                edge = np.concatenate([rgb[0], rgb[-1], rgb[:, 0], rgb[:, -1]])
+                background = np.median(edge, axis=0)
+                foreground = np.linalg.norm(rgb - background, axis=2) > 24
+            half = max(1, height // 2)
+            sparse_top = (float(np.mean(foreground[:half])) < 0.05 and
+                          float(np.mean(foreground[half:])) > 0.2)
+        return {"bbox": manual, "method": "manual", "confidence": 0.3 if sparse_top else 1.0,
+                "needs_review": sparse_top,
+                "warning": "上半部主要是细线；请只框住角色及会移动的道具" if sparse_top else ""}
 
     rgba = np.asarray(image.convert("RGBA"))
     alpha = rgba[:, :, 3]

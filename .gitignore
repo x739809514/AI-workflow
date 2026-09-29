@@ -1,0 +1,6 @@
+work/
+*.mp4
+__pycache__/
+.env
+.DS_Store
+:memory:.ses

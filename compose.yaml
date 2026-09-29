@@ -1,0 +1,19 @@
+services:
+  animation-normalizer:
+    build: .
+    container_name: animation-normalizer
+    env_file: .env
+    environment:
+      WORKDIR: /app/work
+      PUBLIC_BASE: http://localhost:8765
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ./work:/app/work
+    networks:
+      - dify
+    restart: unless-stopped
+networks:
+  dify:
+    external: true
+    name: docker_default

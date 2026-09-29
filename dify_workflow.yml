@@ -1,0 +1,624 @@
+app:
+  description: 母版解析、可选 Runway Gen-4.5 或 MiniMax H3、画布恢复与角色校准
+  icon: 🎞️
+  icon_background: '#E4F2FF'
+  mode: workflow
+  name: 角色动画统一生成与校准
+  use_icon_as_answer_icon: false
+dependencies: []
+kind: app
+version: 0.3.1
+workflow:
+  conversation_variables: []
+  environment_variables:
+  - id: animation-service-token
+    name: ANIMATION_SERVICE_TOKEN
+    value: ''
+    value_type: secret
+    description: 动画处理服务的访问令牌
+  - id: runway-api-key
+    name: RUNWAY_API_KEY
+    value: ''
+    value_type: secret
+    description: Runway Dev API 密钥
+  - id: minimax-api-key
+    name: MINIMAX_API_KEY
+    value: ''
+    value_type: secret
+    description: MiniMax 按量计费 API 密钥
+  - id: minimax-api-base
+    name: MINIMAX_API_BASE
+    value: https://api.minimax.io
+    value_type: string
+    description: 国际版 https://api.minimax.io；中国版 https://api.minimax.cn
+  features:
+    file_upload:
+      enabled: true
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      image:
+        enabled: true
+        number_limits: 1
+        transfer_methods:
+        - local_file
+        - remote_url
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+    - id: start-source-prepare
+      source: start
+      target: prepare
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      zIndex: 0
+      data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: http-request
+    - id: prepare-source-parse
+      source: prepare
+      target: parse
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      zIndex: 0
+      data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: http-request
+        targetType: code
+    - id: parse-source-review
+      source: parse
+      target: review
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      zIndex: 0
+      data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+    - id: review-review-review_end
+      source: review
+      target: review_end
+      sourceHandle: review
+      targetHandle: target
+      type: custom
+      zIndex: 0
+      data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: end
+    - id: review-false-prompt
+      source: review
+      target: prompt
+      sourceHandle: 'false'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+      data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+    - id: prompt-source-generate
+      source: prompt
+      target: generate
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      zIndex: 0
+      data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: http-request
+    - id: generate-source-result
+      source: generate
+      target: result
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      zIndex: 0
+      data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: http-request
+        targetType: code
+    - id: result-source-frame_link
+      source: result
+      target: frame_link
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      zIndex: 0
+      data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: code
+    - id: frame_link-source-end
+      source: frame_link
+      target: end
+      sourceHandle: source
+      targetHandle: target
+      type: custom
+      zIndex: 0
+      data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: end
+    nodes:
+    - id: start
+      type: custom
+      width: 244
+      height: 230
+      position:
+        x: 30
+        y: 240
+      positionAbsolute:
+        x: 30
+        y: 240
+      sourcePosition: right
+      targetPosition: left
+      selected: false
+      data:
+        title: 上传母版与动作
+        type: start
+        desc: ''
+        selected: false
+        variables:
+        - variable: master
+          label: 母版图片
+          type: file
+          required: true
+          allowed_file_types:
+          - image
+          allowed_file_upload_methods:
+          - local_file
+          - remote_url
+          allowed_file_extensions:
+          - .png
+          - .jpg
+          - .jpeg
+          - .webp
+        - variable: action
+          label: 动作描述
+          type: paragraph
+          required: true
+          max_length: 2000
+          options: []
+        - variable: model
+          label: 视频模型
+          type: select
+          required: true
+          options:
+          - runway_gen45
+          - minimax_h3_768p
+          - minimax_h3_2k
+        - variable: bbox
+          label: 角色框（可选：x,y,宽,高）
+          type: text-input
+          required: false
+          max_length: 80
+          options: []
+    - id: prepare
+      type: custom
+      width: 244
+      height: 110
+      position:
+        x: 334
+        y: 240
+      positionAbsolute:
+        x: 334
+        y: 240
+      sourcePosition: right
+      targetPosition: left
+      selected: false
+      data:
+        title: 解析母版并适配画布
+        type: http-request
+        desc: ''
+        selected: false
+        method: post
+        url: http://host.docker.internal:8765/prepare
+        authorization:
+          type: no-auth
+          config: null
+        headers: Authorization:Bearer {{#env.ANIMATION_SERVICE_TOKEN#}}
+        params: ''
+        body:
+          type: form-data
+          data:
+          - id: master-file
+            key: master
+            type: file
+            file:
+            - start
+            - master
+            value: ''
+          - id: bbox-field
+            key: bbox
+            type: text
+            value: '{{#start.bbox#}}'
+        timeout:
+          max_connect_timeout: 10
+          max_read_timeout: 90
+          max_write_timeout: 90
+        retry_config:
+          retry_enabled: false
+          max_retries: 0
+          retry_interval: 100
+    - id: parse
+      type: custom
+      width: 244
+      height: 110
+      position:
+        x: 638
+        y: 240
+      positionAbsolute:
+        x: 638
+        y: 240
+      sourcePosition: right
+      targetPosition: left
+      selected: false
+      data:
+        title: 读取角色框与补边记录
+        type: code
+        desc: ''
+        selected: false
+        code_language: python3
+        code: "def main(body: str, status_code: int) -> dict:\n    import json\n \
+          \   data = json.loads(body)\n    if status_code != 200:\n        raise ValueError(data.get(\"\
+          error\", \"母版解析失败\"))\n    analysis = data[\"analysis\"]\n    return {\n\
+          \        \"job_id\": data[\"job_id\"],\n        \"analysis_json\": json.dumps(analysis,\
+          \ ensure_ascii=False),\n        \"review_flag\": \"review\" if data[\"needs_review\"\
+          ] else \"ready\",\n        \"review_message\": \"请打开预览页检查角色框，并填写 bbox=x,y,宽,高\
+          \ 后重新运行。\",\n        \"preview_url\": data[\"preview_url\"],\n    }\n"
+        variables:
+        - variable: body
+          value_selector:
+          - prepare
+          - body
+        - variable: status_code
+          value_selector:
+          - prepare
+          - status_code
+        outputs:
+          job_id:
+            type: string
+            children: null
+          analysis_json:
+            type: string
+            children: null
+          review_flag:
+            type: string
+            children: null
+          review_message:
+            type: string
+            children: null
+          preview_url:
+            type: string
+            children: null
+    - id: review
+      type: custom
+      width: 244
+      height: 110
+      position:
+        x: 942
+        y: 240
+      positionAbsolute:
+        x: 942
+        y: 240
+      sourcePosition: right
+      targetPosition: left
+      selected: false
+      data:
+        title: 母版是否需要复核
+        type: if-else
+        desc: ''
+        selected: false
+        cases:
+        - case_id: review
+          id: review
+          logical_operator: and
+          conditions:
+          - id: review-condition
+            variable_selector:
+            - parse
+            - review_flag
+            comparison_operator: is
+            value: review
+            varType: string
+    - id: review_end
+      type: custom
+      width: 244
+      height: 110
+      position:
+        x: 1246
+        y: 60
+      positionAbsolute:
+        x: 1246
+        y: 60
+      sourcePosition: right
+      targetPosition: left
+      selected: false
+      data:
+        title: 复核角色框
+        type: end
+        desc: ''
+        selected: false
+        outputs:
+        - variable: job_id
+          value_selector:
+          - parse
+          - job_id
+          value_type: string
+        - variable: preview_url
+          value_selector:
+          - parse
+          - preview_url
+          value_type: string
+        - variable: message
+          value_selector:
+          - parse
+          - review_message
+          value_type: string
+    - id: prompt
+      type: custom
+      width: 244
+      height: 110
+      position:
+        x: 1246
+        y: 300
+      positionAbsolute:
+        x: 1246
+        y: 300
+      sourcePosition: right
+      targetPosition: left
+      selected: false
+      data:
+        title: 固定构图提示词
+        type: code
+        desc: ''
+        selected: false
+        code_language: python3
+        code: "def main(analysis_json: str, action: str) -> dict:\n    import json\n\
+          \    analysis = json.loads(analysis_json)\n    x, y, w, h = analysis[\"\
+          subject\"][\"bbox\"]\n    width, height = analysis[\"master_size\"]\n  \
+          \  center = (x + w / 2) / width\n    bottom = (y + h) / height\n    prompt\
+          \ = (\n        \"Use the input image as the exact first-frame composition\
+          \ reference. \"\n        f\"Action: {action}. \"\n        \"Static locked\
+          \ camera. No zoom, pan, tilt, reframing or perspective change. \"\n    \
+          \    \"Maintain the character's screen-space size and position; keep furniture\
+          \ and background stationary. \"\n        f\"Subject center near {center:.3f}\
+          \ of frame width, bottom near {bottom:.3f} of frame height. \"\n       \
+          \ \"Animate only the requested action.\"\n    )\n    return {\"prompt\"\
+          : prompt}\n"
+        variables:
+        - variable: analysis_json
+          value_selector:
+          - parse
+          - analysis_json
+        - variable: action
+          value_selector:
+          - start
+          - action
+        outputs:
+          prompt:
+            type: string
+            children: null
+    - id: generate
+      type: custom
+      width: 244
+      height: 110
+      position:
+        x: 1550
+        y: 300
+      positionAbsolute:
+        x: 1550
+        y: 300
+      sourcePosition: right
+      targetPosition: left
+      selected: false
+      data:
+        title: 按所选模型生成并启动校准
+        type: http-request
+        desc: ''
+        selected: false
+        method: post
+        url: http://host.docker.internal:8765/generate
+        authorization:
+          type: no-auth
+          config: null
+        headers: Authorization:Bearer {{#env.ANIMATION_SERVICE_TOKEN#}}
+        params: ''
+        body:
+          type: form-data
+          data:
+          - id: job-id-field
+            key: job_id
+            type: text
+            value: '{{#parse.job_id#}}'
+          - id: action-field
+            key: action
+            type: text
+            value: '{{#start.action#}}'
+          - id: prompt-field
+            key: prompt
+            type: text
+            value: '{{#prompt.prompt#}}'
+          - id: model-field
+            key: model
+            type: text
+            value: '{{#start.model#}}'
+          - id: runway-key-field
+            key: runway_api_key
+            type: text
+            value: '{{#env.RUNWAY_API_KEY#}}'
+          - id: minimax-key-field
+            key: minimax_api_key
+            type: text
+            value: '{{#env.MINIMAX_API_KEY#}}'
+          - id: minimax-base-field
+            key: minimax_api_base
+            type: text
+            value: '{{#env.MINIMAX_API_BASE#}}'
+        timeout:
+          max_connect_timeout: 10
+          max_read_timeout: 90
+          max_write_timeout: 90
+        retry_config:
+          retry_enabled: false
+          max_retries: 0
+          retry_interval: 100
+    - id: result
+      type: custom
+      width: 244
+      height: 110
+      position:
+        x: 1854
+        y: 300
+      positionAbsolute:
+        x: 1854
+        y: 300
+      sourcePosition: right
+      targetPosition: left
+      selected: false
+      data:
+        title: 读取任务地址
+        type: code
+        desc: ''
+        selected: false
+        code_language: python3
+        code: "def main(body: str, status_code: int) -> dict:\n    import json\n \
+          \   data = json.loads(body)\n    if status_code != 202:\n        raise ValueError(data.get(\"\
+          error\", \"视频任务提交失败\"))\n    return {\"job_id\": data[\"job_id\"], \"model\"\
+          : data[\"model\"],\n            \"preview_url\": data[\"preview_url\"],\n\
+          \            \"frames_url\": data[\"frames_url\"],\n            \"message\"\
+          : \"任务已提交。打开进度页，完成后下载视频和 20 帧透明 PNG 图片包。\"}\n"
+        variables:
+        - variable: body
+          value_selector:
+          - generate
+          - body
+        - variable: status_code
+          value_selector:
+          - generate
+          - status_code
+        outputs:
+          job_id:
+            type: string
+            children: null
+          model:
+            type: string
+            children: null
+          preview_url:
+            type: string
+            children: null
+          frames_url:
+            type: string
+            children: null
+          message:
+            type: string
+            children: null
+    - id: frame_link
+      type: custom
+      width: 244
+      height: 110
+      position:
+        x: 2158
+        y: 300
+      positionAbsolute:
+        x: 2158
+        y: 300
+      sourcePosition: right
+      targetPosition: left
+      selected: false
+      data:
+        title: 20 帧去背景图片包地址
+        type: code
+        desc: ''
+        selected: false
+        code_language: python3
+        code: "def main(frames_url: str) -> dict:\n    return {\"frames_url\": frames_url,\n\
+          \            \"message\": \"图片包将在生成、恢复画布、抽取 20 帧及去背景完成后可下载。\"}\n"
+        variables:
+        - variable: frames_url
+          value_selector:
+          - result
+          - frames_url
+        outputs:
+          frames_url:
+            type: string
+            children: null
+          message:
+            type: string
+            children: null
+    - id: end
+      type: custom
+      width: 244
+      height: 110
+      position:
+        x: 2462
+        y: 300
+      positionAbsolute:
+        x: 2462
+        y: 300
+      sourcePosition: right
+      targetPosition: left
+      selected: false
+      data:
+        title: 生成任务与结果入口
+        type: end
+        desc: ''
+        selected: false
+        outputs:
+        - variable: job_id
+          value_selector:
+          - result
+          - job_id
+          value_type: string
+        - variable: model
+          value_selector:
+          - result
+          - model
+          value_type: string
+        - variable: preview_url
+          value_selector:
+          - result
+          - preview_url
+          value_type: string
+        - variable: frames_url
+          value_selector:
+          - frame_link
+          - frames_url
+          value_type: string
+        - variable: message
+          value_selector:
+          - result
+          - message
+          value_type: string
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.7

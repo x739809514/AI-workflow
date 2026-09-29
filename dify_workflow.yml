@@ -211,6 +211,7 @@ workflow:
           label: 视频模型
           type: select
           required: true
+          default: runway_gen45
           options:
           - runway_gen45
           - minimax_h3_768p
@@ -219,8 +220,18 @@ workflow:
           label: 角色框（可选：x,y,宽,高）
           type: text-input
           required: false
+          default: ''
           max_length: 80
           options: []
+        - variable: composition_mode
+          label: 构图适配
+          type: select
+          required: true
+          default: auto
+          options:
+          - auto
+          - full_frame
+          - focus
     - id: prepare
       type: custom
       width: 244
@@ -260,6 +271,10 @@ workflow:
             key: bbox
             type: text
             value: '{{#start.bbox#}}'
+          - id: composition-mode-field
+            key: composition_mode
+            type: text
+            value: '{{#start.composition_mode#}}'
         timeout:
           max_connect_timeout: 10
           max_read_timeout: 90
@@ -292,8 +307,9 @@ workflow:
           error\", \"母版解析失败\"))\n    analysis = data[\"analysis\"]\n    return {\n\
           \        \"job_id\": data[\"job_id\"],\n        \"analysis_json\": json.dumps(analysis,\
           \ ensure_ascii=False),\n        \"review_flag\": \"review\" if data[\"needs_review\"\
-          ] else \"ready\",\n        \"review_message\": \"请打开预览页检查角色框，并填写 bbox=x,y,宽,高\
-          \ 后重新运行。\",\n        \"preview_url\": data[\"preview_url\"],\n    }\n"
+          ] else \"ready\",\n        \"review_message\": \"请打开预览页检查红色角色框和蓝色聚焦区域；角色框不准时填写\
+          \ bbox=x,y,宽,高 后重新运行。\",\n        \"preview_url\": data[\"preview_url\"\
+          ],\n    }\n"
         variables:
         - variable: body
           value_selector:
@@ -404,16 +420,18 @@ workflow:
         code_language: python3
         code: "def main(analysis_json: str, action: str) -> dict:\n    import json\n\
           \    analysis = json.loads(analysis_json)\n    x, y, w, h = analysis[\"\
-          subject\"][\"bbox\"]\n    width, height = analysis[\"master_size\"]\n  \
-          \  center = (x + w / 2) / width\n    bottom = (y + h) / height\n    prompt\
-          \ = (\n        \"Use the input image as the exact first-frame composition\
-          \ reference. \"\n        f\"Action: {action}. \"\n        \"Static locked\
-          \ camera. No zoom, pan, tilt, reframing or perspective change. \"\n    \
-          \    \"Maintain the character's screen-space size and position; keep furniture\
-          \ and background stationary. \"\n        f\"Subject center near {center:.3f}\
-          \ of frame width, bottom near {bottom:.3f} of frame height. \"\n       \
-          \ \"Animate only the requested action.\"\n    )\n    return {\"prompt\"\
-          : prompt}\n"
+          subject\"][\"bbox\"]\n    width, height = analysis[\"api_size\"]\n    sx,\
+          \ sy, sw, sh = analysis[\"transform\"][\"source_rect\"]\n    px, py, pw,\
+          \ ph = analysis[\"transform\"][\"content_rect\"]\n    center = (px + (x\
+          \ + w / 2 - sx) * pw / sw) / width\n    bottom = (py + (y + h - sy) * ph\
+          \ / sh) / height\n    prompt = (\n        \"Use the input image as the exact\
+          \ first-frame composition reference. \"\n        f\"Action: {action}. \"\
+          \n        \"Static locked camera. No zoom, pan, tilt, reframing or perspective\
+          \ change. \"\n        \"Maintain the character's screen-space size and position;\
+          \ keep furniture and background stationary. \"\n        f\"Subject center\
+          \ near {center:.3f} of frame width, bottom near {bottom:.3f} of frame height.\
+          \ \"\n        \"Animate only the requested action.\"\n    )\n    return\
+          \ {\"prompt\": prompt}\n"
         variables:
         - variable: analysis_json
           value_selector:

@@ -55,7 +55,7 @@ parse_prepared = '''def main(body: str, status_code: int) -> dict:
         "job_id": data["job_id"],
         "analysis_json": json.dumps(analysis, ensure_ascii=False),
         "review_flag": "review" if data["needs_review"] else "ready",
-        "review_message": "请打开预览页检查角色框，并填写 bbox=x,y,宽,高 后重新运行。",
+        "review_message": "请打开预览页检查红色角色框和蓝色聚焦区域；角色框不准时填写 bbox=x,y,宽,高 后重新运行。",
         "preview_url": data["preview_url"],
     }
 '''
@@ -64,9 +64,11 @@ make_prompt = '''def main(analysis_json: str, action: str) -> dict:
     import json
     analysis = json.loads(analysis_json)
     x, y, w, h = analysis["subject"]["bbox"]
-    width, height = analysis["master_size"]
-    center = (x + w / 2) / width
-    bottom = (y + h) / height
+    width, height = analysis["api_size"]
+    sx, sy, sw, sh = analysis["transform"]["source_rect"]
+    px, py, pw, ph = analysis["transform"]["content_rect"]
+    center = (px + (x + w / 2 - sx) * pw / sw) / width
+    bottom = (py + (y + h - sy) * ph / sh) / height
     prompt = (
         "Use the input image as the exact first-frame composition reference. "
         f"Action: {action}. "
@@ -103,14 +105,17 @@ nodes = [
         {"variable": "action", "label": "动作描述", "type": "paragraph", "required": True,
          "max_length": 2000, "options": []},
         {"variable": "model", "label": "视频模型", "type": "select", "required": True,
-         "options": ["runway_gen45", "minimax_h3_768p", "minimax_h3_2k"]},
+         "default": "runway_gen45", "options": ["runway_gen45", "minimax_h3_768p", "minimax_h3_2k"]},
         {"variable": "bbox", "label": "角色框（可选：x,y,宽,高）", "type": "text-input",
-         "required": False, "max_length": 80, "options": []},
+         "required": False, "default": "", "max_length": 80, "options": []},
+        {"variable": "composition_mode", "label": "构图适配", "type": "select", "required": True,
+         "default": "auto", "options": ["auto", "full_frame", "focus"]},
     ]}, 230),
     node("prepare", "解析母版并适配画布", "http-request", 334, 240,
          http_node("/prepare", [
              {"id": "master-file", "key": "master", "type": "file", "file": ["start", "master"], "value": ""},
              form_field("bbox", "{{#start.bbox#}}", "bbox-field"),
+             form_field("composition_mode", "{{#start.composition_mode#}}", "composition-mode-field"),
          ])),
     node("parse", "读取角色框与补边记录", "code", 638, 240,
          code_node(parse_prepared, [var("body", "prepare", "body"),

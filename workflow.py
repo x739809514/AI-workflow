@@ -55,7 +55,11 @@ def detect_subject(image: Image.Image, manual: list[int] | None) -> dict:
         x, y, w, h = manual
         if x < 0 or y < 0 or x + w > width or y + h > height:
             raise ValueError("--bbox 必须位于母版图范围内")
-        return {"bbox": manual, "method": "manual", "confidence": 1.0, "needs_review": False}
+        too_broad = (w * h > width * height * 0.85 or
+                     (w > width * 0.95 and h > height * 0.95))
+        return {"bbox": manual, "method": "manual", "confidence": 0.3 if too_broad else 1.0,
+                "needs_review": too_broad,
+                "warning": "角色框覆盖了几乎整个画面；请只框住角色及会移动的道具" if too_broad else ""}
 
     rgba = np.asarray(image.convert("RGBA"))
     alpha = rgba[:, :, 3]
@@ -92,12 +96,39 @@ def detect_subject(image: Image.Image, manual: list[int] | None) -> dict:
     return {"bbox": box, "method": method, "confidence": confidence, "needs_review": confidence < 0.8}
 
 
-def make_api_image(image: Image.Image, target: tuple[int, int]) -> tuple[Image.Image, dict]:
+def focus_rect(image_size: tuple[int, int], box: list[int], target: tuple[int, int]) -> list[int] | None:
+    """Choose a safe, aspect-matched view around the subject with generous motion room."""
+    src_w, src_h = image_size
+    x, y, width, height = box
+    ratio = target[0] / target[1]
+    view_w = max(width * 1.4, height * 1.4 * ratio)
+    view_h = view_w / ratio
+    if view_w > src_w or view_h > src_h:
+        return None
+    view_w = min(src_w, max(2, round(view_w)))
+    view_h = min(src_h, max(2, round(view_w / ratio)))
+    left = max(0, min(src_w - view_w, round(x + width / 2 - view_w / 2)))
+    top = max(0, min(src_h - view_h, round(y + height / 2 - view_h / 2)))
+    return [left, top, view_w, view_h]
+
+
+def make_api_image(image: Image.Image, target: tuple[int, int], box: list[int],
+                   mode: str = "auto") -> tuple[Image.Image, dict]:
     src_w, src_h = image.size
     dst_w, dst_h = target
-    scale = min(dst_w / src_w, dst_h / src_h)
-    resized_w = max(1, round(src_w * scale))
-    resized_h = max(1, round(src_h * scale))
+    if mode not in {"auto", "full_frame", "focus"}:
+        raise ValueError("composition_mode 须为 auto、full_frame 或 focus")
+    source_rect = [0, 0, src_w, src_h]
+    candidate = focus_rect(image.size, box, target) if mode != "full_frame" else None
+    full_scale = min(dst_w / src_w, dst_h / src_h)
+    if candidate is not None:
+        focused_scale = min(dst_w / candidate[2], dst_h / candidate[3])
+        if mode == "focus" or focused_scale >= full_scale * 1.15:
+            source_rect = candidate
+    source_x, source_y, source_w, source_h = source_rect
+    scale = min(dst_w / source_w, dst_h / source_h)
+    resized_w = max(1, round(source_w * scale))
+    resized_h = max(1, round(source_h * scale))
     left = (dst_w - resized_w) // 2
     top = (dst_h - resized_h) // 2
     rgb = image.convert("RGB")
@@ -105,25 +136,33 @@ def make_api_image(image: Image.Image, target: tuple[int, int]) -> tuple[Image.I
     border = np.concatenate([sample[0], sample[-1], sample[:, 0], sample[:, -1]])
     fill = tuple(int(v) for v in np.median(border, axis=0))
     canvas = Image.new("RGB", target, fill)
-    canvas.paste(rgb.resize((resized_w, resized_h), Image.Resampling.LANCZOS), (left, top))
+    crop = rgb.crop((source_x, source_y, source_x + source_w, source_y + source_h))
+    canvas.paste(crop.resize((resized_w, resized_h), Image.Resampling.LANCZOS), (left, top))
     transform = {
-        "scale_x": resized_w / src_w,
-        "scale_y": resized_h / src_h,
+        "scale_x": resized_w / source_w,
+        "scale_y": resized_h / source_h,
+        "source_rect": source_rect,
         "content_rect": [left, top, resized_w, resized_h],
         "padding": [left, top, dst_w - left - resized_w, dst_h - top - resized_h],
-        "operation": "resize_and_pad",
+        "operation": "focus_crop_and_resize" if source_rect != [0, 0, src_w, src_h] else "resize_and_pad",
+        "requested_mode": mode,
+        "scale_gain": round(scale / full_scale, 3),
         "background_rgb": list(fill),
     }
     return canvas, transform
 
 
-def preview_image(image: Image.Image, box: list[int], path: Path) -> None:
+def preview_image(image: Image.Image, box: list[int], path: Path,
+                  source_rect: list[int] | None = None) -> None:
     from PIL import ImageDraw
 
     preview = image.convert("RGB").copy()
     draw = ImageDraw.Draw(preview)
     x, y, w, h = box
     draw.rectangle((x, y, x + w, y + h), outline="#ff4030", width=max(2, image.width // 250))
+    if source_rect and source_rect != [0, 0, image.width, image.height]:
+        sx, sy, sw, sh = source_rect
+        draw.rectangle((sx, sy, sx + sw, sy + sh), outline="#31a9ff", width=max(2, image.width // 250))
     preview.save(path)
 
 
@@ -137,11 +176,12 @@ def prepare(args: argparse.Namespace) -> None:
     with Image.open(image_path) as raw:
         image = ImageOps.exif_transpose(raw).copy()
     subject = detect_subject(image, args.bbox)
-    api_image, transform = make_api_image(image, args.api_size)
+    api_image, transform = make_api_image(image, args.api_size, subject["bbox"],
+                                          getattr(args, "composition_mode", "auto"))
     api_image.save(folder / "api_input.png")
-    preview_image(image, subject["bbox"], folder / "preview.png")
+    preview_image(image, subject["bbox"], folder / "preview.png", transform["source_rect"])
     analysis = {
-        "version": 1,
+        "version": 2,
         "master_path": str(image_path),
         "master_size": list(image.size),
         "api_size": list(args.api_size),
@@ -158,9 +198,11 @@ def prepare(args: argparse.Namespace) -> None:
 
 def prompt_for(action: str, analysis: dict) -> str:
     box = analysis["subject"]["bbox"]
-    w, h = analysis["master_size"]
-    center_x = (box[0] + box[2] / 2) / w
-    bottom_y = (box[1] + box[3]) / h
+    sx, sy, sw, sh = analysis["transform"].get("source_rect", [0, 0, *analysis["master_size"]])
+    px, py, pw, ph = analysis["transform"]["content_rect"]
+    api_w, api_h = analysis["api_size"]
+    center_x = (px + (box[0] + box[2] / 2 - sx) * pw / sw) / api_w
+    bottom_y = (py + (box[1] + box[3] - sy) * ph / sh) / api_h
     return (
         "Use the input image as the first frame and composition reference. "
         f"Action: {action.strip()}\n"
@@ -248,7 +290,16 @@ def poll(args: argparse.Namespace) -> None:
         print(f"任务状态: {status}。稍后再次运行 poll。")
 
 
-def crop_to_master(frame: np.ndarray, analysis: dict) -> np.ndarray:
+def load_master_frame(analysis: dict) -> np.ndarray:
+    with Image.open(analysis["master_path"]) as image:
+        master = ImageOps.exif_transpose(image).convert("RGB")
+        if master.size != tuple(analysis["master_size"]):
+            raise RuntimeError("母版尺寸与预处理记录不一致")
+        return cv2.cvtColor(np.asarray(master), cv2.COLOR_RGB2BGR)
+
+
+def crop_to_master(frame: np.ndarray, analysis: dict,
+                   master_frame: np.ndarray | None = None) -> np.ndarray:
     api_w, api_h = analysis["api_size"]
     left, top, content_w, content_h = analysis["transform"]["content_rect"]
     frame_h, frame_w = frame.shape[:2]
@@ -259,7 +310,23 @@ def crop_to_master(frame: np.ndarray, analysis: dict) -> np.ndarray:
     if x1 <= x0 or y1 <= y0:
         raise RuntimeError("视频画面与预处理记录不兼容")
     master_w, master_h = analysis["master_size"]
-    return cv2.resize(frame[y0:y1, x0:x1], (master_w, master_h), interpolation=cv2.INTER_CUBIC)
+    sx, sy, sw, sh = analysis["transform"].get("source_rect", [0, 0, master_w, master_h])
+    if not (0 <= sx < master_w and 0 <= sy < master_h and
+            0 < sw <= master_w - sx and 0 < sh <= master_h - sy):
+        raise RuntimeError("裁切区域超出母版画布")
+    patch = cv2.resize(frame[y0:y1, x0:x1], (sw, sh), interpolation=cv2.INTER_CUBIC)
+    if [sx, sy, sw, sh] == [0, 0, master_w, master_h]:
+        return patch
+    output = (master_frame if master_frame is not None else load_master_frame(analysis)).copy()
+    # Blend at the crop boundary so a small model background-color shift does not
+    # leave a rectangular seam on the restored master canvas.
+    feather = min(24, max(4, min(sw, sh) // 40))
+    xx = np.minimum(np.arange(sw), np.arange(sw)[::-1]).astype(np.float32)
+    yy = np.minimum(np.arange(sh), np.arange(sh)[::-1]).astype(np.float32)
+    opacity = np.minimum(1.0, np.minimum(yy[:, None], xx[None, :]) / feather)[:, :, None]
+    base = output[sy:sy + sh, sx:sx + sw]
+    output[sy:sy + sh, sx:sx + sw] = np.clip(base * (1.0 - opacity) + patch * opacity, 0, 255).astype(np.uint8)
+    return output
 
 
 def alignment_for_first_frame(first_frame: np.ndarray, analysis: dict) -> tuple[np.ndarray, dict]:
@@ -267,6 +334,9 @@ def alignment_for_first_frame(first_frame: np.ndarray, analysis: dict) -> tuple[
     reference = analysis["subject"]["bbox"]
     observed_box = observed["bbox"]
     identity = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
+    if analysis["transform"].get("operation") == "focus_crop_and_resize":
+        return identity, {"applied": True, "scale": 1.0, "offset": [0.0, 0.0],
+                          "reason": "已按聚焦裁切记录映射回母版；不移动母版静态区域", "detected": observed}
     if observed["confidence"] < 0.6 or reference[3] == 0:
         return identity, {"applied": False, "reason": "首帧角色检测置信度不足", "detected": observed}
     scale = reference[3] / observed_box[3]
@@ -336,7 +406,8 @@ def normalize(args: argparse.Namespace) -> None:
     if not ok:
         capture.release()
         raise RuntimeError("输入视频没有可读取的帧")
-    first_unaligned = crop_to_master(first_raw, analysis)
+    master_frame = load_master_frame(analysis)
+    first_unaligned = crop_to_master(first_raw, analysis, master_frame)
     matrix, alignment = alignment_for_first_frame(first_unaligned, analysis)
     restored = video_writer(folder / "restored.mp4", fps, master_size)
     normalized = video_writer(folder / "normalized.mp4", fps, output_size)
@@ -352,11 +423,11 @@ def normalize(args: argparse.Namespace) -> None:
                 ok, frame = capture.read()
                 if not ok:
                     break
-            master_frame = align_frame(crop_to_master(frame, analysis), matrix, analysis)
+            restored_frame = align_frame(crop_to_master(frame, analysis, master_frame), matrix, analysis)
             if first_frame is None:
-                first_frame = master_frame.copy()
-            restored.write(master_frame)
-            normalized.write(project_frame(master_frame, analysis))
+                first_frame = restored_frame.copy()
+            restored.write(restored_frame)
+            normalized.write(project_frame(restored_frame, analysis))
             frames += 1
     finally:
         capture.release()
@@ -365,13 +436,12 @@ def normalize(args: argparse.Namespace) -> None:
     if frames == 0 or first_frame is None:
         raise RuntimeError("输入视频没有可读取的帧")
     cv2.imwrite(str(folder / "restored_first_frame.png"), first_frame)
-    master = cv2.imread(analysis["master_path"])
-    if master is not None and master.shape[:2] == first_frame.shape[:2]:
-        difference = float(np.mean(cv2.absdiff(master, first_frame)))
-    else:
-        difference = None
+    difference = float(np.mean(cv2.absdiff(master_frame, first_frame)))
     detected = alignment["detected"]
     reference_box = analysis["subject"]["bbox"]
+    bx, by, bw, bh = reference_box
+    subject_difference = float(np.mean(cv2.absdiff(
+        master_frame[by:by + bh, bx:bx + bw], first_frame[by:by + bh, bx:bx + bw])))
     observed_box = detected["bbox"]
     if detected["confidence"] >= 0.6:
         ref_x = reference_box[0] + reference_box[2] / 2
@@ -388,15 +458,17 @@ def normalize(args: argparse.Namespace) -> None:
         "restored": str(folder / "restored.mp4"), "normalized": str(folder / "normalized.mp4"),
         "first_frame_alignment": alignment,
         "first_frame_mean_absolute_difference": difference,
+        "first_frame_subject_difference": subject_difference,
+        "generated_region": analysis["transform"].get("source_rect", [0, 0, *master_size]),
         "detected_first_frame_subject": detected,
         "first_frame_center_displacement_fraction": displacement,
         "first_frame_height_difference_fraction": height_difference,
         "review_required": analysis["subject"]["needs_review"] or detected["needs_review"]
                            or (not alignment["applied"])
-                           or (difference is not None and difference > 25)
+                           or subject_difference > 25
                            or (displacement is not None and max(abs(v) for v in displacement) > 0.05)
                            or (height_difference is not None and abs(height_difference) > 0.1),
-        "note": "自动检测与首帧像素差只能提示漂移；请检查 restored_first_frame.png。",
+        "note": "自动检测与首帧像素差只能提示漂移；聚焦区域外保留原母版，动作超出区域时须重新选择完整画面；请检查 restored_first_frame.png。",
     }
     write_json(folder / "quality_report.json", report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -419,6 +491,7 @@ def main() -> None:
     prep.add_argument("--api-size", type=size_arg, default=(720, 1280))
     prep.add_argument("--output-size", type=size_arg, default=(1080, 1920))
     prep.add_argument("--bbox", type=bbox_arg)
+    prep.add_argument("--composition-mode", choices=["auto", "full_frame", "focus"], default="auto")
     prep.add_argument("--target-height", type=float, default=0.70)
     prep.add_argument("--anchor-y", type=float, default=0.85)
     prep.set_defaults(func=prepare)

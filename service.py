@@ -139,9 +139,11 @@ class Handler(BaseHTTPRequestHandler):
                 input_path.write_bytes(raw)
                 box_text = fields.getfirst("bbox", "").strip()
                 box = bbox_arg(box_text) if box_text else None
+                composition_mode = fields.getfirst("composition_mode", "auto").strip() or "auto"
                 prepare(argparse.Namespace(image=str(input_path), name=job_id, workdir=str(ROOT),
                                            api_size=(720, 1280), output_size=(1080, 1920), bbox=box,
-                                           target_height=0.70, anchor_y=0.85))
+                                           target_height=0.70, anchor_y=0.85,
+                                           composition_mode=composition_mode))
                 view_token = secrets.token_urlsafe(24)
                 update_status(job_id, "prepared", "母版解析和输入图适配已完成", view_token=view_token)
                 analysis = read_json(folder / "analysis.json")
@@ -234,12 +236,17 @@ class Handler(BaseHTTPRequestHandler):
                            "请回到 Dify，在 bbox 输入框填写 x,y,宽,高 后重新运行。"
                            if analysis["subject"]["needs_review"] else
                            "红框是本次使用的角色范围。")
+            transform = analysis["transform"]
+            focus_text = (f"蓝框是送给视频模型的聚焦区域，放大倍数约 {transform['scale_gain']:.2f}；"
+                          "蓝框外会保留母版原像素。请检查动作是否可能超出蓝框。"
+                          if transform["operation"] == "focus_crop_and_resize" else
+                          "本次保留完整母版画面。")
             details = (
                 f"<h2>母版解析</h2><p>原图尺寸：{width} × {height} px；"
                 f"角色框：<code>{bbox_text}</code>；识别方式："
                 f"{html.escape(analysis['subject']['method'])}；置信度："
                 f"{analysis['subject']['confidence']:.2f}</p>"
-                f"<p>{review_text}</p>"
+                f"<p>{review_text} {focus_text}</p>"
                 f'<img src="/preview/{job_id}?t={token}" alt="母版角色框预览" '
                 'style="display:block;max-width:100%;max-height:75vh;background:#222;border:1px solid #aaa">'
             )

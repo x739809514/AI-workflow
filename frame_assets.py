@@ -9,7 +9,7 @@ import zipfile
 import cv2
 import numpy as np
 
-from workflow import align_frame, crop_to_master, read_json
+from workflow import align_frame, crop_to_master, load_master_frame, read_json
 
 
 FRAME_COUNT = 20
@@ -61,6 +61,7 @@ def export_frame_assets(task_folder: Path, count: int = FRAME_COUNT) -> dict:
     if not source.is_file():
         raise FileNotFoundError(source)
     analysis = read_json(task_folder / "analysis.json")
+    master_frame = load_master_frame(analysis)
     quality = read_json(task_folder / "quality_report.json")
     alignment = quality["first_frame_alignment"]
     scale = float(alignment.get("scale", 1.0)) if alignment["applied"] else 1.0
@@ -85,7 +86,7 @@ def export_frame_assets(task_folder: Path, count: int = FRAME_COUNT) -> dict:
             ok, frame = capture.read()
             if not ok:
                 raise RuntimeError(f"无法读取第 {index} 帧")
-            restored = align_frame(crop_to_master(frame, analysis), matrix, analysis)
+            restored = align_frame(crop_to_master(frame, analysis, master_frame), matrix, analysis)
             rgba, info = remove_flat_background(restored)
             background_info = info
             name = f"frame_{sequence:02d}.png"
@@ -98,6 +99,9 @@ def export_frame_assets(task_folder: Path, count: int = FRAME_COUNT) -> dict:
     master_width, master_height = analysis["master_size"]
     manifest = {"source": source.name, "frame_count": count, "width": master_width,
                 "height": master_height, "fps": fps, "background": background_info,
+                "composition": {"operation": analysis["transform"]["operation"],
+                                "source_rect": analysis["transform"].get("source_rect", [0, 0, master_width, master_height]),
+                                "quality_review_required": quality["review_required"]},
                 "frames": records}
     manifest_path = frame_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

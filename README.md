@@ -4,7 +4,7 @@
 
 ## 在 Dify 使用
 
-导入 [dify_workflow.yml](./dify_workflow.yml)。在起始节点的「视频模型」选择 `runway_gen45`、`minimax_h3_768p` 或 `minimax_h3_2k`。随后工作流解析母版、复核角色框、固定构图、调用所选模型并返回进度页和图片包地址。抽帧和去背景在本地服务中异步执行，须在进度页显示完成后下载。
+导入 [dify_workflow.yml](./dify_workflow.yml)。在起始节点的「视频模型」选择 `runway_gen45`、`minimax_h3_768p` 或 `minimax_h3_2k`；「构图适配」通常选 `auto`。随后工作流解析母版、复核角色框、固定构图、调用所选模型并返回进度页和图片包地址。抽帧和去背景在本地服务中异步执行，须在进度页显示完成后下载。
 
 在 Dify Editor 的环境变量中配置：
 
@@ -23,7 +23,7 @@ python3 service.py
 
 Dify 容器通过 `host.docker.internal:8765` 访问处理服务；进度页由本机 `localhost:8765` 提供。也可以使用 `docker compose up -d --build`，此时须把 DSL 的服务地址改为 `http://animation-normalizer:8765`。模型密钥在 Dify 的密钥变量中配置，提交时传给本地服务，不写入任务文件。
 
-上传母版并填写动作描述。角色自动识别置信度不足时，工作流返回预览页；在预览图检查红框，然后在 `bbox` 输入框填写 `x,y,宽,高` 并重新运行。当前示例母版的参考值是 `105,810,335,480`，其他母版须按各自图片调整。提交后打开进度页；完成后可下载统一画布视频、查看恢复后的首帧，并下载含 20 张透明 PNG 与 `manifest.json` 的 ZIP 图片包。
+上传母版并填写动作描述。角色自动识别置信度不足时，工作流返回预览页；在预览图检查红色角色框，然后在 `bbox` 输入框填写 `x,y,宽,高` 并重新运行。不要把整张图当作角色框；当前示例母版的参考值是 `105,810,335,480`，其他母版须按各自图片调整。蓝框是实际送给模型的聚焦区域：若手臂或道具的动作可能超出蓝框，改选 `full_frame`；希望即使放大收益较小仍聚焦时，可选 `focus`。提交后打开进度页；完成后可下载统一画布视频、查看恢复后的首帧，并下载含 20 张透明 PNG 与 `manifest.json` 的 ZIP 图片包。当前最终图片产物是 ZIP，不生成单张 Sprite Sheet。
 
 两个模型都使用适配后的 720×1280 PNG 首帧，默认生成 5 秒竖屏视频。Runway Gen-4.5 使用 `720:1280`；MiniMax H3 在图生视频模式使用 `adaptive`，可选择 768P 或 2K。服务按模型调用对应的任务查询接口，完成后立即下载视频，再统一恢复画布和处理图片包。Runway 和 MiniMax 分别计费；H3 需开通按量计费 API。
 
@@ -32,6 +32,7 @@ Dify 容器通过 `host.docker.internal:8765` 访问处理服务；进度页由�
 ```bash
 python3 -m pip install -r requirements.txt
 python3 workflow.py prepare master.png --name chef --api-size 720x1280 --output-size 1080x1920
+python3 workflow.py prepare master.png --name chef_focus --bbox 105,810,335,480 --composition-mode auto
 python3 workflow.py submit work/chef --name wave --action "角色抬起右手，缓慢挥手，然后回到起始姿势" --dry-run
 python3 workflow.py submit work/chef --name wave_h3 --model minimax_h3_768p --action "角色抬起右手，缓慢挥手，然后回到起始姿势" --dry-run
 ```
@@ -52,9 +53,10 @@ python3 workflow.py frames work/chef/jobs/wave_live
 
 ## 画布与限制
 
-- `prepare` 等比缩放并补边，不裁掉母版内容；`analysis.json` 记录原图尺寸、角色框和完整变换。
+- `prepare` 有 `auto`、`focus` 和 `full_frame` 三种构图模式。`auto` 在可把主体放大至少 15% 时聚焦，否则保留全图；`focus` 尽量选取包含角色框及四周活动余量的区域。`analysis.json` 记录原图尺寸、角色框、裁切坐标和完整变换。预览图用红框表示角色、蓝框表示模型输入区域。
+- 聚焦输入会裁去模型画面以外的部分；恢复时只将生成区域贴回母版，外部保留原图，并在边界做轻微过渡。模型无法生成聚焦区域外的新动作；长线条或活动道具穿过蓝框边界时，预览后应改选 `full_frame` 或调整角色框。
 - `restored.mp4` 恢复母版画面；MP4 编码器可能将奇数宽度裁成偶数。透明 PNG 直接从原始生成视频和变换记录恢复，保持母版的准确像素尺寸。`normalized.mp4` 使用统一项目画布，默认 1080×1920。
-- 图片包均匀选取含首尾帧的 20 个时间点，从画面边缘采样单色背景并生成透明通道。背景边缘复杂时会明确报告图片包失败，视频仍可下载；这种素材需要另接 AI 抠图服务。
+- 图片包直接从原始生成视频均匀选取含首尾帧的 20 个时间点，映射回母版尺寸，从画面边缘采样单色背景并生成透明通道。`manifest.json` 记录帧时间、构图模式和质量复核标记。背景边缘复杂时会明确报告图片包失败，视频仍可下载；这种素材需要另接 AI 抠图服务。
 - 复杂背景、多人或遮挡时应手工填写角色框。视频模型仍可能重绘背景或改变角色比例；质量报告和首帧预览用于复核。
 - 模型输出链接可能过期，因此服务在任务完成后立即保存视频。图片须符合所选模型的输入限制；当前适配图为 720×1280 PNG。
 

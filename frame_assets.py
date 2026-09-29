@@ -15,7 +15,7 @@ from workflow import align_frame, crop_to_master, load_master_frame, read_json
 FRAME_COUNT = 20
 
 
-def remove_flat_background(frame: np.ndarray) -> tuple[np.ndarray, dict]:
+def remove_flat_background(frame: np.ndarray, expected_bgr: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
     """Key a nearly uniform edge color, retaining enclosed dark artwork."""
     height, width = frame.shape[:2]
     strip = max(2, min(height, width) // 80)
@@ -23,11 +23,18 @@ def remove_flat_background(frame: np.ndarray) -> tuple[np.ndarray, dict]:
                              frame[-strip:].reshape(-1, 3),
                              frame[:, :strip].reshape(-1, 3),
                              frame[:, -strip:].reshape(-1, 3)))
-    color = np.median(border, axis=0)
-    border_distance = np.max(np.abs(border.astype(np.float32) - color), axis=1)
-    spread = float(np.percentile(border_distance, 90))
-    if spread > 24:
+    seed = np.asarray(expected_bgr, dtype=np.float32) if expected_bgr is not None else np.median(border, axis=0)
+    seed_distance = np.max(np.abs(border.astype(np.float32) - seed), axis=1)
+    background_samples = seed_distance <= 24
+    if float(np.mean(background_samples)) < (0.1 if expected_bgr is not None else 0.5):
         raise ValueError("画面边缘背景不是单色；当前去背景节点无法可靠处理，请使用透明母版或配置 AI 抠图")
+    color = np.median(border[background_samples], axis=0)
+    border_distance = np.max(np.abs(border.astype(np.float32) - color), axis=1)
+    background_samples = border_distance <= 24
+    background_fraction = float(np.mean(background_samples))
+    # The subject may touch one edge. Measure the background cluster itself,
+    # rather than treating foreground pixels along that edge as background noise.
+    spread = float(np.percentile(border_distance[background_samples], 90))
 
     distance = np.max(np.abs(frame.astype(np.float32) - color), axis=2)
     low = max(5.0, spread + 3.0)
@@ -53,7 +60,8 @@ def remove_flat_background(frame: np.ndarray) -> tuple[np.ndarray, dict]:
         / fraction[visible, None], 0, 255)
     rgba = np.dstack((foreground.astype(np.uint8), alpha))
     return rgba, {"method": "flat_edge_color", "background_rgb": [int(v) for v in color[::-1]],
-                  "border_spread": round(spread, 2)}
+                  "border_spread": round(spread, 2),
+                  "border_background_fraction": round(background_fraction, 3)}
 
 
 def export_frame_assets(task_folder: Path, count: int = FRAME_COUNT) -> dict:
@@ -62,6 +70,7 @@ def export_frame_assets(task_folder: Path, count: int = FRAME_COUNT) -> dict:
         raise FileNotFoundError(source)
     analysis = read_json(task_folder / "analysis.json")
     master_frame = load_master_frame(analysis)
+    expected_bgr = np.asarray(analysis["transform"]["background_rgb"][::-1], dtype=np.float32)
     quality = read_json(task_folder / "quality_report.json")
     alignment = quality["first_frame_alignment"]
     scale = float(alignment.get("scale", 1.0)) if alignment["applied"] else 1.0
@@ -87,7 +96,7 @@ def export_frame_assets(task_folder: Path, count: int = FRAME_COUNT) -> dict:
             if not ok:
                 raise RuntimeError(f"无法读取第 {index} 帧")
             restored = align_frame(crop_to_master(frame, analysis, master_frame), matrix, analysis)
-            rgba, info = remove_flat_background(restored)
+            rgba, info = remove_flat_background(restored, expected_bgr)
             background_info = info
             name = f"frame_{sequence:02d}.png"
             if not cv2.imwrite(str(frame_dir / name), rgba[:, :, [2, 1, 0, 3]]):

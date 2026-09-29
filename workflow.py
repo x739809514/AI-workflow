@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -46,7 +47,11 @@ def read_json(path: Path) -> dict:
 
 
 def write_json(path: Path, data: dict) -> None:
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                     prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
+        temp_path = Path(handle.name)
+        handle.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    os.replace(temp_path, path)
 
 
 def detect_subject(image: Image.Image, manual: list[int] | None) -> dict:
@@ -291,6 +296,9 @@ def poll(args: argparse.Namespace) -> None:
     status, url, failure = query_task(task, key)
     task.update({"status": status, "failure": failure})
     write_json(folder / "task.json", task)
+    on_status = getattr(args, "on_status", None)
+    if callable(on_status):
+        on_status(status)
     if status == "SUCCEEDED":
         if not url:
             raise RuntimeError(f"{spec.label} 任务成功，但没有返回视频 URL")

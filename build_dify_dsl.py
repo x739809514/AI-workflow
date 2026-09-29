@@ -128,9 +128,9 @@ nodes = [
             "id": "review-condition", "variable_selector": ["parse", "review_flag"],
             "comparison_operator": "is", "value": "review", "varType": "string"}]}]}),
     node("review_end", "复核角色框", "end", 1246, 60, {"outputs": [
-        {"variable": "job_id", "value_selector": ["parse", "job_id"], "value_type": "string"},
-        {"variable": "preview_url", "value_selector": ["parse", "preview_url"], "value_type": "string"},
-        {"variable": "message", "value_selector": ["parse", "review_message"], "value_type": "string"},
+        {"variable": "review_job_id", "value_selector": ["parse", "job_id"], "value_type": "string"},
+        {"variable": "review_preview_url", "value_selector": ["parse", "preview_url"], "value_type": "string"},
+        {"variable": "review_message", "value_selector": ["parse", "review_message"], "value_type": "string"},
     ]}),
     node("prompt", "固定构图提示词", "code", 1246, 300,
          code_node(make_prompt, [var("analysis_json", "parse", "analysis_json"),

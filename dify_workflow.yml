@@ -384,17 +384,17 @@ workflow:
         desc: ''
         selected: false
         outputs:
-        - variable: job_id
+        - variable: review_job_id
           value_selector:
           - parse
           - job_id
           value_type: string
-        - variable: preview_url
+        - variable: review_preview_url
           value_selector:
           - parse
           - preview_url
           value_type: string
-        - variable: message
+        - variable: review_message
           value_selector:
           - parse
           - review_message

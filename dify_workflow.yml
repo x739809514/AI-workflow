@@ -303,13 +303,17 @@ workflow:
         selected: false
         code_language: python3
         code: "def main(body: str, status_code: int) -> dict:\n    import json\n \
-          \   data = json.loads(body)\n    if status_code != 200:\n        raise ValueError(data.get(\"\
-          error\", \"母版解析失败\"))\n    analysis = data[\"analysis\"]\n    return {\n\
-          \        \"job_id\": data[\"job_id\"],\n        \"analysis_json\": json.dumps(analysis,\
-          \ ensure_ascii=False),\n        \"review_flag\": \"review\" if data[\"needs_review\"\
-          ] else \"ready\",\n        \"review_message\": \"请打开预览页检查红色角色框和蓝色聚焦区域；角色框不准时填写\
-          \ bbox=x,y,宽,高 后重新运行。\",\n        \"preview_url\": data[\"preview_url\"\
-          ],\n    }\n"
+          \   if status_code != 200:\n        try:\n            detail = json.loads(body).get(\"\
+          error\", \"母版解析失败\")\n        except (ValueError, TypeError, AttributeError):\n\
+          \            detail = \"动画处理服务不可用；请检查 animation-normalizer 容器和 8765 端口\"\
+          \n        raise ValueError(f\"母版解析请求失败 (HTTP {status_code}): {detail}\"\
+          )\n    try:\n        data = json.loads(body)\n    except (ValueError, TypeError):\n\
+          \        raise ValueError(\"母版解析服务返回了非 JSON 响应，请检查处理服务日志\")\n    analysis\
+          \ = data[\"analysis\"]\n    return {\n        \"job_id\": data[\"job_id\"\
+          ],\n        \"analysis_json\": json.dumps(analysis, ensure_ascii=False),\n\
+          \        \"review_flag\": \"review\" if data[\"needs_review\"] else \"ready\"\
+          ,\n        \"review_message\": \"请打开预览页检查红色角色框和蓝色聚焦区域；角色框不准时填写 bbox=x,y,宽,高\
+          \ 后重新运行。\",\n        \"preview_url\": data[\"preview_url\"],\n    }\n"
         variables:
         - variable: body
           value_selector:
@@ -529,11 +533,16 @@ workflow:
         selected: false
         code_language: python3
         code: "def main(body: str, status_code: int) -> dict:\n    import json\n \
-          \   data = json.loads(body)\n    if status_code != 202:\n        raise ValueError(data.get(\"\
-          error\", \"视频任务提交失败\"))\n    return {\"job_id\": data[\"job_id\"], \"model\"\
-          : data[\"model\"],\n            \"preview_url\": data[\"preview_url\"],\n\
-          \            \"frames_url\": data[\"frames_url\"],\n            \"message\"\
-          : \"任务已提交。打开进度页，完成后下载视频和 20 帧透明 PNG 图片包。\"}\n"
+          \   if status_code != 202:\n        try:\n            detail = json.loads(body).get(\"\
+          error\", \"视频任务提交失败\")\n        except (ValueError, TypeError, AttributeError):\n\
+          \            detail = \"动画处理服务不可用；请检查 animation-normalizer 容器和 8765 端口\"\
+          \n        raise ValueError(f\"视频任务提交失败 (HTTP {status_code}): {detail}\"\
+          )\n    try:\n        data = json.loads(body)\n    except (ValueError, TypeError):\n\
+          \        raise ValueError(\"视频任务服务返回了非 JSON 响应，请检查处理服务日志\")\n    return\
+          \ {\"job_id\": data[\"job_id\"], \"model\": data[\"model\"],\n         \
+          \   \"preview_url\": data[\"preview_url\"],\n            \"frames_url\"\
+          : data[\"frames_url\"],\n            \"message\": \"任务已提交。打开进度页，完成后下载视频和\
+          \ 20 帧透明 PNG 图片包。\"}\n"
         variables:
         - variable: body
           value_selector:

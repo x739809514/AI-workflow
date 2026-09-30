@@ -47,9 +47,16 @@ def var(name, node_id, key):
 
 parse_prepared = '''def main(body: str, status_code: int) -> dict:
     import json
-    data = json.loads(body)
     if status_code != 200:
-        raise ValueError(data.get("error", "母版解析失败"))
+        try:
+            detail = json.loads(body).get("error", "母版解析失败")
+        except (ValueError, TypeError, AttributeError):
+            detail = "动画处理服务不可用；请检查 animation-normalizer 容器和 8765 端口"
+        raise ValueError(f"母版解析请求失败 (HTTP {status_code}): {detail}")
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        raise ValueError("母版解析服务返回了非 JSON 响应，请检查处理服务日志")
     analysis = data["analysis"]
     return {
         "job_id": data["job_id"],
@@ -82,9 +89,16 @@ make_prompt = '''def main(analysis_json: str, action: str) -> dict:
 
 parse_submitted = '''def main(body: str, status_code: int) -> dict:
     import json
-    data = json.loads(body)
     if status_code != 202:
-        raise ValueError(data.get("error", "视频任务提交失败"))
+        try:
+            detail = json.loads(body).get("error", "视频任务提交失败")
+        except (ValueError, TypeError, AttributeError):
+            detail = "动画处理服务不可用；请检查 animation-normalizer 容器和 8765 端口"
+        raise ValueError(f"视频任务提交失败 (HTTP {status_code}): {detail}")
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        raise ValueError("视频任务服务返回了非 JSON 响应，请检查处理服务日志")
     return {"job_id": data["job_id"], "model": data["model"],
             "preview_url": data["preview_url"],
             "frames_url": data["frames_url"],

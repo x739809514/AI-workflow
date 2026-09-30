@@ -18,10 +18,10 @@
 ```bash
 cp .env.example .env
 # 在 .env 中填写 ANIMATION_SERVICE_TOKEN
-python3 service.py
+docker compose up -d --build
 ```
 
-Dify 容器通过 `host.docker.internal:8765` 访问处理服务；进度页由本机 `localhost:8765` 提供。也可以使用 `docker compose up -d --build`，此时须把 DSL 的服务地址改为 `http://animation-normalizer:8765`。模型密钥在 Dify 的密钥变量中配置，提交时传给本地服务，并用服务令牌派生的密钥加密保存在任务目录，供本地服务重启后继续查询已提交的模型任务；明文密钥不写入状态或日志。
+Dify 容器通过 `host.docker.internal:8765` 访问处理服务；进度页由本机 `localhost:8765` 提供。`docker compose` 将处理服务设为自动重启。运行工作流前可用 `docker compose ps` 检查 `animation-normalizer` 是否运行；若它已停止，Dify 的 HTTP 节点会返回 503。模型密钥在 Dify 的密钥变量中配置，提交时传给本地服务，并用服务令牌派生的密钥加密保存在任务目录，供本地服务重启后继续查询已提交的模型任务；明文密钥不写入状态或日志。
 
 上传母版并填写动作描述。角色自动识别置信度不足时，工作流返回预览页；在预览图检查红色角色框，然后在 `bbox` 输入框填写 `x,y,宽,高` 并重新运行。如果上半部只是吊线，不要把整张图当作角色框；当前木偶母版的参考值是 `105,810,335,480`。如果全身立绘几乎铺满画面，可以填写接近整张图的角色框，例如 238×658 立绘可填 `2,0,235,658`。蓝框是实际送给模型的聚焦区域：若手臂或道具的动作可能超出蓝框，改选 `full_frame`；希望即使放大收益较小仍聚焦时，可选 `focus`。提交后打开进度页；完成后可下载统一画布视频、查看恢复后的首帧，并下载含 20 张透明 PNG 与 `manifest.json` 的 ZIP 图片包。当前最终图片产物是 ZIP，不生成单张 Sprite Sheet。
 
